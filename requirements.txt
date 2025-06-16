@@ -1,0 +1,7 @@
+panel
+holoviews
+bokeh
+pandas
+matplotlib
+cartopy
+requests
