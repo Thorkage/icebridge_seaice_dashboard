@@ -23,36 +23,32 @@ hv.extension('bokeh')
 pn.extension()
 
 import boto3
-
-# Read creds & bucket info from env
+import s3fs
+# AWS credentials & bucket info via env vars
 aws_access_key = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_key = os.environ['AWS_SECRET_ACCESS_KEY']
 aws_region     = os.environ.get('AWS_REGION', 'us-east-1')
 bucket         = os.environ['ICEBRIDGE_BUCKET']
+prefix         = os.environ.get('ICEBRIDGE_PREFIX', '')  # e.g. 'icebridge/'
 
-# Initialize S3 client
-session = boto3.Session(
-    aws_access_key_id=aws_access_key,
-    aws_secret_access_key=aws_secret_key,
-    region_name=aws_region
+# Initialize s3fs filesystem
+fs = s3fs.S3FileSystem(
+    key=aws_access_key,
+    secret=aws_secret_key,
+    client_kwargs={'region_name': aws_region}
 )
-s3 = session.client('s3')
 
-data_dir = '/tmp/icebridge'
-if not os.path.isdir(data_dir):
-    os.makedirs(data_dir, exist_ok=True)
-    paginator = s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=bucket):
-        for obj in page.get('Contents', []):
-            key = obj['Key']
-            if key.lower().endswith('.csv'):
-                local = os.path.join(data_dir, os.path.basename(key))
-                if not os.path.exists(local):
-                    print(f"↓ Downloading {key}")
-                    s3.download_file(bucket, key, local)
+# Build list of S3 paths for all CSVs under the prefix
+s3_paths = fs.glob(f"{bucket}/{prefix}*.csv")  # e.g. ['my-bucket/unified_20090331.csv', ...]
+# Convert to s3:// URIs for pandas
+data_files = [f"s3://{path}" for path in s3_paths]
 
-# Now point the rest of your code at data_dir
-target_pattern = os.path.join(data_dir, '*.csv')
+# Use data_files list directly in ingestion steps
+# e.g. for filepath in data_files:
+#         df = pd.read_csv(filepath, storage_options={'key': aws_access_key, 'secret': aws_secret_key})
+
+target_pattern = data_files  # list of file URIs to iterate over
+
 
 # instrument flags → friendly names
 instrument_flags = {
