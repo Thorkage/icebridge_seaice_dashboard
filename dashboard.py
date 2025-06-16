@@ -22,8 +22,6 @@ import panel as pn
 hv.extension('bokeh')
 pn.extension()
 
-
-# — where to stash data on the server
 DATA_DIR = "/tmp/icebridge"
 # — your Zenodo record’s API endpoint
 ZENODO_API = os.environ.get(
@@ -41,7 +39,12 @@ if not os.path.isdir(DATA_DIR):
     # metadata['files'] is a list of dicts, each with 'key' and 'links'
     for file_meta in metadata.get("files", []):
         fname = file_meta["key"]                # e.g. 'unified_20090331.csv'
-        url   = file_meta["links"]["download"]  # direct download link
+        links = file_meta.get("links", {})
+        url   = links.get("download") or links.get("self")
+        
+        if url is None:
+            raise RuntimeError(f"No download or self link for {file_meta['key']}")
+
         local = os.path.join(DATA_DIR, fname)
         if os.path.exists(local):
             continue                             # skip if already present
@@ -56,7 +59,7 @@ if not os.path.isdir(DATA_DIR):
     print("✅ All files downloaded.")
 
 # Point the rest of your code at DATA_DIR
-data_dir = DATA_DIR
+data_dir = DATA_DIR 
 
 target_pattern = os.path.join(data_dir, 'unified_*.csv')
 
