@@ -30,17 +30,32 @@ aws_access_key = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_key = os.environ['AWS_SECRET_ACCESS_KEY']
 aws_region     = os.environ.get('AWS_REGION', 'us-east-1')
 bucket         = os.environ['ICEBRIDGE_BUCKET']
-prefix         = os.environ.get('ICEBRIDGE_PREFIX', '')  # e.g. 'icebridge/'
+# prefix         = os.environ.get('ICEBRIDGE_PREFIX', '')  # e.g. 'icebridge/'
+
+session = boto3.Session(region_name=aws_region)
+s3      = session.client('s3')
+paginator = s3.get_paginator('list_objects_v2')
+
+
+all_keys = []
+for page in paginator.paginate(Bucket=bucket):
+    for obj in page.get('Contents', []):
+        key = obj['Key']
+        if key.lower().endswith('.csv'):
+            all_keys.append(key)
+
+# 3) Map just the basename → full key
+flight_to_key = {os.path.basename(key): key for key in all_keys}
 
 # Initialize s3fs filesystem (streaming reads)
-fs = s3fs.S3FileSystem(
-    key=aws_access_key,
-    secret=aws_secret_key,
-    client_kwargs={'region_name': aws_region}
-)
+# fs = s3fs.S3FileSystem(
+#     key=aws_access_key,
+#     secret=aws_secret_key,
+#     client_kwargs={'region_name': aws_region}
+# )
 
-data_files = [f"s3://{bucket}/{key}" for key in fs.glob(f"{bucket}/{prefix}*.csv")]
-data_dir = None  # not used
+# data_files = [f"s3://{bucket}/{key}" for key in fs.glob(f"{bucket}/*.csv")]
+# data_dir = None  # not used
 
 # instrument flags → friendly names
 instrument_flags = {
@@ -72,19 +87,27 @@ color_map = {
 # ─── 1. Build the segments dataframe ─────────────────────────────────────────
 records = []
 
-for uri in data_files:
+# for uri in data_files:
+for fn, key in flight_to_key.items():
+    # Build a s3:// URI for pandas
+    uri = f"s3://{bucket}/{key}"
     
-    fn = os.path.basename(uri)
-    # read only the essential columns plus whatever metadata might exist
+    # Stream in only the columns we care about
     df = pd.read_csv(
         uri,
-        storage_options={'key': aws_access_key, 'secret': aws_secret_key},
+        storage_options={
+            "key": aws_access_key,
+            "secret": aws_secret_key
+        },
         usecols=lambda c: c in {
-        'cumulative_distance',
-        'has_POSAV','has_snow_radar','has_full_ATM','has_narrow_ATM','has_KT19',
-        'mission','radar_name_code','full_atm_instrument_id','narrow_atm_instrument_id'
+            'cumulative_distance',
+            'has_POSAV','has_snow_radar',
+            'has_full_ATM','has_narrow_ATM','has_KT19',
+            'mission','radar_name_code',
+            'full_atm_instrument_id','narrow_atm_instrument_id'
         }
     )
+    
     df['cumulative_distance'] = df['cumulative_distance']/1000
 
     # extract metadata safely, defaulting to None
@@ -128,8 +151,6 @@ for uri in data_files:
 segments_df = pd.DataFrame(records)
 segments_df['color'] = segments_df['instrument'].map(color_map)
 
-
-
 # ─── 2. Load flight tracks (lon/lat) ─────────────────────────────────────────
 tracks_dfs = {}
 for uri in data_files:
@@ -138,9 +159,13 @@ for uri in data_files:
         storage_options={'key': aws_access_key, 'secret': aws_secret_key},
         usecols=['x', 'y'])
     tracks_dfs[fn] = df
+    
+keys = list(tracks_dfs.keys())
 
-
-
+flight_to_s3 = {
+  fn: f"{bucket}/{prefix}{fn}"
+  for fn in keys
+}
 # ─── 4. Timeline callback (HoloViews + Bokeh) ────────────────────────────────
 def make_timeline(selected_flights):
     # categorical rows in reverse so POSAV at top
@@ -433,11 +458,16 @@ def make_variable_plot(selected_flights, variable):
     for fn in sorted(selected_flights):
         date = fn.split('.')[0].split('_')[1]
         date_formatted = date[6:] + '-' + date[4:6] + '-' + date[:4]  # DD-MM-YYYY format
-
-
-        df = pd.read_csv(os.path.join(data_dir, fn),
-                         usecols=lambda c: c in {'cumulative_distance', variable}
-                         )
+        
+        s3_path = flight_to_s3[fn]
+        with fs.open(s3_path, 'rb') as f:
+            df = pd.read_csv(
+                f,
+                usecols=lambda c: c in {'cumulative_distance', variable}
+            )
+        # df = pd.read_csv(os.path.join(data_dir, fn),
+        #                  usecols=lambda c: c in {'cumulative_distance', variable}
+        #                  )
             
         df['cumulative_distance'] /= 1000  # to km
         # df['myi_concentration'] *= 100
