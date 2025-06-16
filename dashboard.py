@@ -25,30 +25,22 @@ pn.extension()
 import boto3
 import s3fs
 # AWS credentials & bucket info via env vars
+
 aws_access_key = os.environ['AWS_ACCESS_KEY_ID']
 aws_secret_key = os.environ['AWS_SECRET_ACCESS_KEY']
 aws_region     = os.environ.get('AWS_REGION', 'us-east-1')
 bucket         = os.environ['ICEBRIDGE_BUCKET']
 prefix         = os.environ.get('ICEBRIDGE_PREFIX', '')  # e.g. 'icebridge/'
 
-# Initialize s3fs filesystem
+# Initialize s3fs filesystem (streaming reads)
 fs = s3fs.S3FileSystem(
     key=aws_access_key,
     secret=aws_secret_key,
     client_kwargs={'region_name': aws_region}
 )
 
-# Build list of S3 paths for all CSVs under the prefix
-s3_paths = fs.glob(f"{bucket}/{prefix}*.csv")  # e.g. ['my-bucket/unified_20090331.csv', ...]
-# Convert to s3:// URIs for pandas
-data_files = [f"s3://{path}" for path in s3_paths]
-
-# Use data_files list directly in ingestion steps
-# e.g. for filepath in data_files:
-#         df = pd.read_csv(filepath, storage_options={'key': aws_access_key, 'secret': aws_secret_key})
-
-target_pattern = data_files  # list of file URIs to iterate over
-
+data_files = [f"s3://{bucket}/{key}" for key in fs.glob(f"{bucket}/{prefix}*.csv")]
+data_dir = None  # not used
 
 # instrument flags → friendly names
 instrument_flags = {
@@ -79,14 +71,20 @@ color_map = {
 
 # ─── 1. Build the segments dataframe ─────────────────────────────────────────
 records = []
-for fp in glob.glob(target_pattern):
-    fn = os.path.basename(fp)
+
+for uri in data_files:
+    
+    fn = os.path.basename(uri)
     # read only the essential columns plus whatever metadata might exist
-    df = pd.read_csv(fp, usecols=lambda c: c in {
+    df = pd.read_csv(
+        uri,
+        storage_options={'key': aws_access_key, 'secret': aws_secret_key},
+        usecols=lambda c: c in {
         'cumulative_distance',
         'has_POSAV','has_snow_radar','has_full_ATM','has_narrow_ATM','has_KT19',
         'mission','radar_name_code','full_atm_instrument_id','narrow_atm_instrument_id'
-    })
+        }
+    )
     df['cumulative_distance'] = df['cumulative_distance']/1000
 
     # extract metadata safely, defaulting to None
@@ -126,8 +124,7 @@ for fp in glob.glob(target_pattern):
                     'narrow_atm_instrument_id': narrow_atm_instrument_id
                 })
 
-# … in your “Build the segments dataframe” block …
-# … afterwards …
+
 segments_df = pd.DataFrame(records)
 segments_df['color'] = segments_df['instrument'].map(color_map)
 
@@ -135,9 +132,11 @@ segments_df['color'] = segments_df['instrument'].map(color_map)
 
 # ─── 2. Load flight tracks (lon/lat) ─────────────────────────────────────────
 tracks_dfs = {}
-for fp in glob.glob(target_pattern):
-    fn = os.path.basename(fp)
-    df = pd.read_csv(fp, usecols=['x', 'y'])
+for uri in data_files:
+    fn = os.path.basename(uri)
+    df = pd.read_csv(uri,
+        storage_options={'key': aws_access_key, 'secret': aws_secret_key},
+        usecols=['x', 'y'])
     tracks_dfs[fn] = df
 
 
@@ -407,8 +406,6 @@ btn_deselect_all.on_click(_deselect_all)
 
 # 3) Include them in your sidebar
 
-
-
 # 4) bind your panes as before:
 timeline_pane = pn.bind(make_timeline, flight_selector)
 map_pane      = pn.bind(make_map,      flight_selector)
@@ -438,9 +435,9 @@ def make_variable_plot(selected_flights, variable):
         date_formatted = date[6:] + '-' + date[4:6] + '-' + date[:4]  # DD-MM-YYYY format
 
 
-        df = pd.read_csv(os.path.join(data_dir, fn), usecols=lambda c: c in {
-            'cumulative_distance', variable
-        })
+        df = pd.read_csv(os.path.join(data_dir, fn),
+                         usecols=lambda c: c in {'cumulative_distance', variable}
+                         )
             
         df['cumulative_distance'] /= 1000  # to km
         # df['myi_concentration'] *= 100
