@@ -153,7 +153,9 @@ segments_df['color'] = segments_df['instrument'].map(color_map)
 
 # ─── 2. Load flight tracks (lon/lat) ─────────────────────────────────────────
 tracks_dfs = {}
-for uri in data_files:
+for fn, key in flight_to_key.items():
+    # Build a s3:// URI for pandas
+    uri = f"s3://{bucket}/{key}"
     fn = os.path.basename(uri)
     df = pd.read_csv(uri,
         storage_options={'key': aws_access_key, 'secret': aws_secret_key},
@@ -162,10 +164,6 @@ for uri in data_files:
     
 keys = list(tracks_dfs.keys())
 
-flight_to_s3 = {
-  fn: f"{bucket}/{prefix}{fn}"
-  for fn in keys
-}
 # ─── 4. Timeline callback (HoloViews + Bokeh) ────────────────────────────────
 def make_timeline(selected_flights):
     # categorical rows in reverse so POSAV at top
@@ -458,16 +456,11 @@ def make_variable_plot(selected_flights, variable):
     for fn in sorted(selected_flights):
         date = fn.split('.')[0].split('_')[1]
         date_formatted = date[6:] + '-' + date[4:6] + '-' + date[:4]  # DD-MM-YYYY format
-        
-        s3_path = flight_to_s3[fn]
-        with fs.open(s3_path, 'rb') as f:
-            df = pd.read_csv(
-                f,
-                usecols=lambda c: c in {'cumulative_distance', variable}
-            )
-        # df = pd.read_csv(os.path.join(data_dir, fn),
-        #                  usecols=lambda c: c in {'cumulative_distance', variable}
-        #                  )
+        uri = f"s3://{bucket}/{fn}"
+        df = pd.read_csv(uri,
+            storage_options={'key': aws_access_key, 'secret': aws_secret_key},
+            usecols=lambda c: c in {'cumulative_distance', variable}
+        )
             
         df['cumulative_distance'] /= 1000  # to km
         # df['myi_concentration'] *= 100
@@ -501,8 +494,10 @@ def make_variable_plot(selected_flights, variable):
     )
     
 sample_fp = flight_options[53]
-    
-full_cols = pd.read_csv(os.path.join(data_dir, sample_fp), nrows=0).columns.tolist()
+uri = f"s3://{bucket}/{sample_fp}"
+full_cols = pd.read_csv(uri,
+            storage_options={'key': aws_access_key, 'secret': aws_secret_key},
+        ).columns.tolist()
 var_options = [c for c in full_cols if c != "cumulative_distance"]
 
 variable_selector = pn.widgets.Select(
