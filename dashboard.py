@@ -22,9 +22,37 @@ import panel as pn
 hv.extension('bokeh')
 pn.extension()
 
-data_dir = "/tmp/icebridge"
+import boto3
 
-target_pattern = os.path.join(data_dir, 'unified_*.csv')
+# Read creds & bucket info from env
+aws_access_key = os.environ['AWS_ACCESS_KEY_ID']
+aws_secret_key = os.environ['AWS_SECRET_ACCESS_KEY']
+aws_region     = os.environ.get('AWS_REGION', 'us-east-1')
+bucket         = os.environ['ICEBRIDGE_BUCKET']
+
+# Initialize S3 client
+session = boto3.Session(
+    aws_access_key_id=aws_access_key,
+    aws_secret_access_key=aws_secret_key,
+    region_name=aws_region
+)
+s3 = session.client('s3')
+
+data_dir = '/tmp/icebridge'
+if not os.path.isdir(data_dir):
+    os.makedirs(data_dir, exist_ok=True)
+    paginator = s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket):
+        for obj in page.get('Contents', []):
+            key = obj['Key']
+            if key.lower().endswith('.csv'):
+                local = os.path.join(data_dir, os.path.basename(key))
+                if not os.path.exists(local):
+                    print(f"↓ Downloading {key}")
+                    s3.download_file(bucket, key, local)
+
+# Now point the rest of your code at data_dir
+target_pattern = os.path.join(data_dir, '*.csv')
 
 # instrument flags → friendly names
 instrument_flags = {
