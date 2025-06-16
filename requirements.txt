@@ -6,3 +6,4 @@ matplotlib
 cartopy
 requests
 scipy
+boto3
