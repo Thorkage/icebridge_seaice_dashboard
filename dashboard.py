@@ -18,22 +18,45 @@ warnings.filterwarnings("ignore")
 
 import panel as pn
 
-# allow our custom wrap class to flex-wrap its checkbox rows
-
 # ─── Extensions ─────────────────────────────────────────────────────────────
 hv.extension('bokeh')
 pn.extension()
 
-# ─── Configuration ───────────────────────────────────────────────────────────
-# data_dir = "/Users/torka/MasterThs-T/000_oib_recomputation/unified_data"     # ← change me
 
-if not os.path.isdir("/tmp/icebridge"):
-    url = "https://zenodo.org/record/<your-id>/files/icebridge.zip?download=1"
-    r   = requests.get(url)
-    zf  = zipfile.ZipFile(io.BytesIO(r.content))
-    zf.extractall("/tmp/icebridge")
-data_dir = "/tmp/icebridge"
+# — where to stash data on the server
+DATA_DIR = "/tmp/icebridge"
+# — your Zenodo record’s API endpoint
+ZENODO_API = os.environ.get(
+    "ZENODO_API",
+    "https://zenodo.org/api/records/15672481"
+)
 
+if not os.path.isdir(DATA_DIR):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    print(f"⏬ Fetching Zenodo record metadata…")
+    resp = requests.get(ZENODO_API)
+    resp.raise_for_status()
+    metadata = resp.json()
+
+    # metadata['files'] is a list of dicts, each with 'key' and 'links'
+    for file_meta in metadata.get("files", []):
+        fname = file_meta["key"]                # e.g. 'unified_20090331.csv'
+        url   = file_meta["links"]["download"]  # direct download link
+        local = os.path.join(DATA_DIR, fname)
+        if os.path.exists(local):
+            continue                             # skip if already present
+
+        print(f"  ↓ Downloading {fname}…")
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(local, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1<<20):
+                    f.write(chunk)
+
+    print("✅ All files downloaded.")
+
+# Point the rest of your code at DATA_DIR
+data_dir = DATA_DIR
 
 target_pattern = os.path.join(data_dir, 'unified_*.csv')
 
