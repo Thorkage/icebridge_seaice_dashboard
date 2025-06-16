@@ -7,3 +7,4 @@ cartopy
 requests
 scipy
 boto3
+s3fs
